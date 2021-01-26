@@ -1,0 +1,41 @@
+---
+
+bs_user: "bservice"
+bs_group: "bservice"
+bs_dir: "/opt/browservice"
+bs_build_parent: "{{ bs_dir }}/build"
+bs_build_path: "{{ bs_build_parent }}/browservice-{{ ansible_date_time.date }}"
+
+mstt: "https://downloads.sourceforge.net/project/mscorefonts2/rpms/msttcore-fonts-installer-2.6-1.noarch.rpm"
+
+pkgs:
+  - wget
+  - tar
+  - bzip2
+  - cmake
+  - make
+  - g++
+  - git
+  - pkg-config
+  - poco-devel
+  - libjpeg-turbo-devel
+  - pango-devel
+  - Xvfb
+  - xauth
+  - at-spi2-atk
+  - alsa-lib
+  - libXScrnSaver
+  - libXrandr
+  - libgbm
+  - libXcomposite
+  - libXcursor
+  - curl
+  - cabextract
+  - xorg-x11-font-utils
+  - nss
+  - cups-libs
+  - rpm-build
+
+repo: "https://github.com/ttalvitie/browservice"
+
+...

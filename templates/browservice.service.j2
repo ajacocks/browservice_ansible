@@ -1,0 +1,10 @@
+[Unit]
+Description=Browservice is a web "proxy" server that enables browsing the modern web on historical browsers. It works by rendering the browser viewport into images, which are then shown by a JavaScript application running on the client browser.
+
+[Service]
+ExecStart={{ bs_dir }}/bin/browservice --http-listen-addr=0.0.0.0:8080
+User={{ bs_user }}
+Group={{ bs_group }}
+
+[Install]
+WantedBy=multi-user.target
