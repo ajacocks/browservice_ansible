@@ -1,0 +1,59 @@
+FROM registry.fedoraproject.org/fedora:latest
+MAINTAINER ajacocks email alexander@redhat.com
+LABEL description="This is a Fedora-based container that hosts browservice, a Chrome embedded framework-based proxy for legacy web browsers"
+ENV bs_user="{{ bs_user }}"
+ENV bs_group="{{ bs_group }}"
+ENV bs_dir="{{ bs_dir }}"
+ENV bs_build_parent="{{ bs_build_parent }}"
+ENV bs_build_path="{{ bs_build_path }}"
+ENV make_jobs={{ ansible_processor_vcpus | int + 1 }}
+ENV mstt="{{ mstt }}"
+ENV repo="{{ repo }}"
+ENV port="{{ port }}"
+RUN yum -y update
+RUN yum -y install \
+  wget \
+  tar \
+  bzip2 \
+  cmake \
+  make \
+  g++ \
+  git \
+  pkg-config \
+  poco-devel \
+  libjpeg-turbo-devel \
+  pango-devel \
+  Xvfb \
+  xauth \
+  at-spi2-atk \
+  alsa-lib \
+  libXScrnSaver \
+  libXrandr \
+  libgbm \
+  libXcomposite \
+  libXcursor \
+  curl \
+  cabextract \
+  xorg-x11-font-utils \
+  nss \
+  cups-libs \
+  rpm-build \
+  tree
+RUN rpm -ivh ${mstt}
+RUN groupadd -r ${bs_group}
+RUN useradd -r -g ${bs_group} -c "browservice user" -d "${bs_dir}" -s /sbin/nologin ${bs_user}
+RUN install -g ${bs_group} -o ${bs_user} -m 0755 -d ${bs_build_parent}
+RUN chown -R ${bs_user}:${bs_group} ${bs_dir}
+USER ${bs_user}
+RUN cd ${bs_build_parent} && git clone ${repo}
+RUN cd ${bs_build_parent} && mv browservice ${bs_build_path}
+RUN cd ${bs_build_path} && ./download_cef.sh
+RUN cd ${bs_build_path} && ./setup_cef.sh
+RUN cd ${bs_build_path} && make -j ${make_jobs}
+USER root
+RUN chown root:root ${bs_build_path}/release/bin/chrome-sandbox && chmod 4755 ${bs_build_path}/release/bin/chrome-sandbox
+USER ${bs_user}
+RUN ln -sf ${bs_build_path}/release/bin ${bs_dir}/bin
+RUN ln -sf ${bs_build_path}/release/obj ${bs_dir}/obj
+CMD ["{{ bs_dir }}/bin/browservice","--http-listen-addr=0.0.0.0:{{ port }}"]
+EXPOSE {{ port }}/tcp

@@ -36,6 +36,11 @@ pkgs:
   - cups-libs
   - rpm-build
 
+pkgs_container:
+  - buildah
+  - podman
+
+port: "8080"
 repo: "https://github.com/ttalvitie/browservice"
 
 ...
