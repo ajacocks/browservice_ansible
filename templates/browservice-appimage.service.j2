@@ -1,0 +1,11 @@
+[Unit]
+Description=Browservice is a web "proxy" server that enables browsing the modern web on historical browsers. It works by rendering the browser viewport into images, which are then shown by a JavaScript application running on the client browser.
+
+[Service]
+ExecStart={{ bs_dir }}/bin/browservice --vice-opt-http-listen-addr=0.0.0.0:{{ port }}
+ExecStop=pkill browservice
+User={{ bs_user }}
+Group={{ bs_group }}
+
+[Install]
+WantedBy=local.target

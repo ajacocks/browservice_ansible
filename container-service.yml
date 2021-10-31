@@ -1,0 +1,50 @@
+---
+
+# install browservice in a container
+- name: install required packages
+  package:
+    name: "{{ pkgs_container }}"
+    state: latest
+
+- name: install Dockerfile
+  template:
+    src: "Dockerfile.j2"
+    dest: "Dockerfile"
+  become: no
+
+- name: start container build
+  command: "buildah bud -t localhost/browservice --logfile container_build-{{ ansible_date_time.iso8601_basic_short }}.log"
+  async: 10800
+  poll: 0
+  register: bs_container_build
+  
+- name: Check on container build
+  async_status:
+    jid: "{{ bs_container_build.ansible_job_id }}"
+  register: job_result
+  until: job_result.finished
+  delay: 10
+  retries: 2880
+
+- name: enable systemd container booleans
+  command: "setsebool -P {{ item }} on"
+  loop:
+    - "container_manage_cgroup"
+    - "virt_sandbox_use_fusefs"
+
+- name: run container
+  command: "podman run -d --name browservice_svc -p {{ port }}:{{ port }}/tcp browservice"
+
+- name: stop container
+  command: "podman stop -t 2 browservice_svc"
+  
+- name: install systemd service
+  template:
+    src: browservice-container.service.j2
+    dest: /etc/systemd/system/browservice.service
+    owner: root
+    group: root
+    mode: "0755"
+    setype: "systemd_unit_file_t"
+
+...

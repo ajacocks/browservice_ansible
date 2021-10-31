@@ -10,33 +10,11 @@ ENV make_jobs={{ ansible_processor_vcpus | int + 1 }}
 ENV mstt="{{ mstt }}"
 ENV repo="{{ repo }}"
 ENV port="{{ port }}"
+ENV bs_ver="{{ bs_latest_release.json.tag_name }}"
 RUN yum -y update
 RUN yum -y install \
-  wget \
-  tar \
-  bzip2 \
-  cmake \
-  make \
-  g++ \
+  wget tar bzip2 cmake make g++ pkg-config poco-devel libjpeg-turbo-devel pango-devel Xvfb xauth at-spi2-atk alsa-lib libXScrnSaver libXrandr libgbm libXcomposite libXcursor curl cabextract xorg-x11-font-utils nss cups-libs libatomic gtk3 \
   git \
-  pkg-config \
-  poco-devel \
-  libjpeg-turbo-devel \
-  pango-devel \
-  Xvfb \
-  xauth \
-  at-spi2-atk \
-  alsa-lib \
-  libXScrnSaver \
-  libXrandr \
-  libgbm \
-  libXcomposite \
-  libXcursor \
-  curl \
-  cabextract \
-  xorg-x11-font-utils \
-  nss \
-  cups-libs \
   rpm-build \
   tree
 RUN rpm -ivh ${mstt}
@@ -45,11 +23,11 @@ RUN useradd -r -g ${bs_group} -c "browservice user" -d "${bs_dir}" -s /sbin/nolo
 RUN install -g ${bs_group} -o ${bs_user} -m 0755 -d ${bs_build_parent}
 RUN chown -R ${bs_user}:${bs_group} ${bs_dir}
 USER ${bs_user}
-RUN cd ${bs_build_parent} && git clone ${repo}
+RUN cd ${bs_build_parent} && git clone ${repo} -b ${bs_ver}
 RUN cd ${bs_build_parent} && mv browservice ${bs_build_path}
 RUN cd ${bs_build_path} && ./download_cef.sh
 RUN cd ${bs_build_path} && ./setup_cef.sh
-RUN cd ${bs_build_path} && make -j ${make_jobs}
+RUN cd ${bs_build_path} && make -j ${make_jobs} release
 USER root
 RUN chown root:root ${bs_build_path}/release/bin/chrome-sandbox && chmod 4755 ${bs_build_path}/release/bin/chrome-sandbox
 USER ${bs_user}

@@ -1,10 +1,17 @@
 ---
 
+bs_build: false
+container_service: false
+local_service: false
+
 bs_user: "bservice"
 bs_group: "bservice"
 bs_dir: "/opt/browservice"
 bs_build_parent: "{{ bs_dir }}/build"
 bs_build_path: "{{ bs_build_parent }}/browservice-{{ ansible_date_time.date }}"
+bs_appimage_path: "{{ bs_build_parent }}/browservice-{{ bs_latest_release.json.tag_name }}"
+bs_latest: "https://api.github.com/repos/ttalvitie/browservice/releases/latest"
+bs_release: "https://github.com/ttalvitie/browservice/releases/download"
 
 mstt: "https://downloads.sourceforge.net/project/mscorefonts2/rpms/msttcore-fonts-installer-2.6-1.noarch.rpm"
 

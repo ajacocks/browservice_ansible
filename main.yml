@@ -8,6 +8,15 @@
       package_facts:
         manager: auto
 
+    - name: find out latest release of browservice
+      uri:
+        url: "{{ bs_latest }}"
+        return_content: yes
+      register: bs_latest_release
+    
+    - debug:
+        var: bs_latest_release.json.tag_name
+
     - name: Update the system to the latest packages
       yum:
         name: "*"
@@ -28,195 +37,18 @@
       debug:
         msg: "Only Fedora is supported, for local browservice installation"
       when:
-        - local_service is true
+        - local_service | bool
         - ansible_facts['distribution'] != "Fedora"
 
-    # install browservice locally
-    - block:
-      - name: install required packages
-        package:
-          name: "{{ pkgs }}"
-          state: latest
-  
-      - name: install MS core fonts
-        shell: "rpm -ivh {{ mstt }}"
-        when: "'msttcore-fonts-installer' not in ansible_facts.packages"
-  
-      - name: create browservice group
-        group:
-          name: "{{ bs_group }}"
-          system: yes
-  
-      - name: create browservice user
-        user:
-          name: "{{ bs_user }}"
-          group: "{{ bs_group }}"
-          comment: "browservice user"
-          home: "{{ bs_dir }}"
-          password_lock: yes
-          shell: "/sbin/nologin"
-          system: yes
-  
-      - name: make build directory
-        file:
-          path: "{{ bs_build_parent }}"
-          state: directory
-          mode: "0755"
-          owner: "{{ bs_user }}"
-          group: "{{ bs_group }}"
-        become_user: "{{ bs_user }}"
-  
-      - name: check out source
-        git:
-          repo: "{{ repo }}"
-          dest: "{{ bs_build_path }}"
-        become_user: "{{ bs_user }}"
-  
-      - name: download CEF
-        shell: ./download_cef.sh
-        args:
-          chdir: "{{ bs_build_path }}"
-          creates: "{{ bs_build_path }}/cef.tar.bz2"
-        become_user: "{{ bs_user }}"
-  
-      - name: setup CEF
-        shell: ./setup_cef.sh
-        args:
-          chdir: "{{ bs_build_path }}"
-          creates: "{{ bs_build_path }}/cef"
-        become_user: "{{ bs_user }}"
-        async: 10800
-        poll: 0
-        register: setup_cef
-  
-      - name: Check on CEF setup
-        async_status:
-          jid: "{{ setup_cef.ansible_job_id }}"
-        become_user: "{{ bs_user }}"
-        register: job_result
-        until: job_result.finished
-        delay: 10
-        retries: 2880
-  
-      - name: build browservice
-        shell: "make -j {{ ansible_processor_vcpus | int }}"
-        args:
-          chdir: "{{ bs_build_path }}"
-          creates: "{{ bs_build_path }}/release/bin/chrome-sandbox"
-        become_user: "{{ bs_user }}"
-        async: 10800
-        poll: 0
-        register: bs_build
-  
-      - name: Check on browservice build
-        async_status:
-          jid: "{{ bs_build.ansible_job_id }}"
-        become_user: "{{ bs_user }}"
-        register: job_result
-        until: job_result.finished
-        delay: 10
-        retries: 2880
-  
-      - name: set permissions
-        file:
-          path: "{{ bs_build_path }}/release/bin/chrome-sandbox"
-          owner: root
-          group: root
-          mode: "4755"
-  
-      - name: setup execution link
-        file:
-          src: "{{ bs_build_path }}/release/{{ item }}"
-          dest: "{{ bs_dir }}/{{ item }}"
-          state: link
-        loop:
-        - "bin"
-        - "obj"
-        become_user: "{{ bs_user }}"
-  
-      - name: install systemd service
-        template:
-          src: browservice.service.j2
-          dest: /etc/systemd/system/browservice.service
-          owner: root
-          group: root
-          mode: "0755"
-          setype: "systemd_unit_file_t"
-  
-      - name: copy selinux policy
-        copy:
-          src: browservice.te
-          dest: "{{ bs_build_path }}/"
-        become_user: "{{ bs_user }}"
-        register: copy
-  
-      - name: check selinux policy
-        command: "checkmodule -M -m -o {{ bs_build_path }}/browservice.mod {{ bs_build_path }}/browservice.te"
-        become_user: "{{ bs_user }}"
-        when: copy.changed is true
-  
-      - name: compile selinux policy
-        command: "semodule_package -o {{ bs_build_path }}/browservice.pp -m {{ bs_build_path }}/browservice.mod"
-        become_user: "{{ bs_user }}"
-        when: copy.changed is true
-  
-      - name: load selinux policy
-        command: "semodule -i {{ bs_build_path }}/browservice.pp"
-        when: copy.changed is true
-  
+    - name: install browservice locally
+      import_tasks: local-service.yml
       when:
-        - local_service is true
+        - local_service | bool
         - ansible_facts['distribution'] == "Fedora"
 
-    # install browservice in a container
-    - block:
-      - name: install required packages
-        package:
-          name: "{{ pkgs_container }}"
-          state: latest
-
-      - name: install Dockerfile
-        template:
-          src: "Dockerfile.j2"
-          dest: "Dockerfile"
-        become: no
-
-      - name: start container build
-        command: "buildah bud -t localhost/browservice --logfile container_build-{{ ansible_date_time.iso8601_basic_short }}.log"
-        async: 10800
-        poll: 0
-        register: bs_container_build
-  
-      - name: Check on container build
-        async_status:
-          jid: "{{ bs_container_build.ansible_job_id }}"
-        register: job_result
-        until: job_result.finished
-        delay: 10
-        retries: 2880
-
-      - name: enable systemd container booleans
-        command: "setsebool -P {{ item }} on"
-        loop:
-          - "container_manage_cgroup"
-          - "virt_sandbox_use_fusefs"
-
-      - name: run container
-        command: "podman run -d --name browservice_svc -p {{ port }}:{{ port }}/tcp browservice"
-
-      - name: stop container
-        command: "podman stop -t 2 browservice_svc"
-  
-      - name: install systemd service
-        template:
-          src: browservice-container.service.j2
-          dest: /etc/systemd/system/browservice.service
-          owner: root
-          group: root
-          mode: "0755"
-          setype: "systemd_unit_file_t"
-
-      when: container_service is true
+    - name: install browservice in a container
+      import_tasks: container-service.yml
+      when: container_service | bool
   
     - name: open firewalld port
       firewalld:
