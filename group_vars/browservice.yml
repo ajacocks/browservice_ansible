@@ -15,7 +15,7 @@ bs_release: "https://github.com/ttalvitie/browservice/releases/download"
 
 mstt: "https://downloads.sourceforge.net/project/mscorefonts2/rpms/msttcore-fonts-installer-2.6-1.noarch.rpm"
 
-pkgs:
+pkgs_fedora:
   - wget
   - tar
   - bzip2
@@ -39,6 +39,36 @@ pkgs:
   - curl
   - cabextract
   - xorg-x11-font-utils
+  - nss
+  - cups-libs
+  - rpm-build
+
+pkgs_rhel:
+  - xorg-x11-util-macros
+  - libtool
+  - wget
+  - tar
+  - bzip2
+  - cmake
+  - make
+  - g++
+  - git
+  - pkg-config
+  - poco-devel
+  - libjpeg-turbo-devel
+  - pango-devel
+  - Xvfb
+  - xauth
+  - at-spi2-atk
+  - alsa-lib
+  - libXScrnSaver
+  - libXrandr
+  - libgbm
+  - libXcomposite
+  - libXcursor
+  - curl
+  - cabextract
+  - xorg-x11-utils
   - nss
   - cups-libs
   - rpm-build

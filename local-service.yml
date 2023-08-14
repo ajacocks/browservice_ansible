@@ -1,186 +1,415 @@
 ---
 
 # install browservice locally
-- name: install required packages
-  package:
-    name: "{{ pkgs }}"
-    state: latest
-  
-- name: install MS core fonts
-  shell: "rpm -ivh {{ mstt }}"
-  when: "'msttcore-fonts-installer' not in ansible_facts.packages"
-  
-- name: create browservice group
-  group:
-    name: "{{ bs_group }}"
-    system: yes
-  
-- name: create browservice user
-  user:
-    name: "{{ bs_user }}"
-    group: "{{ bs_group }}"
-    comment: "browservice user"
-    home: "{{ bs_dir }}"
-    password_lock: yes
-    shell: "/sbin/nologin"
-    system: yes
-  
-- name: make build directory
-  file:
-    path: "{{ bs_build_parent }}"
-    state: directory
-    mode: "0755"
-    owner: "{{ bs_user }}"
-    group: "{{ bs_group }}"
-  become_user: "{{ bs_user }}"
 
 - debug:
-    msg: "bs_build is {{ bs_build }}"
+    var: ansible_facts['distribution']
 
-- name: build from source
+- name: explain supported distros
+  debug:
+    msg: "Only Fedora and RHEL are supported, for local browservice installation"
+  when:
+    - ansible_facts['distribution'] != "Fedora" and ansible_facts['distribution'] != "RedHat"
+
+- name: install service on Fedora
   block:
-  - name: check out source
-    git:
-      repo: "{{ repo }}"
-      dest: "{{ bs_build_path }}"
-      version: "{{ bs_latest_release.json.tag_name }}"
-    become_user: "{{ bs_user }}"
+    - name: install required packages
+      package:
+        name: "{{ pkgs_rhel }}"
+        state: latest
+      
+    - name: install MS core fonts
+      shell: "rpm -ivh {{ mstt }}"
+      when: "'msttcore-fonts-installer' not in ansible_facts.packages"
+      
+    - name: create browservice group
+      group:
+        name: "{{ bs_group }}"
+        system: yes
+      
+    - name: create browservice user
+      user:
+        name: "{{ bs_user }}"
+        group: "{{ bs_group }}"
+        comment: "browservice user"
+        home: "{{ bs_dir }}"
+        password_lock: yes
+        shell: "/sbin/nologin"
+        system: yes
+      
+    - name: make build directory
+      file:
+        path: "{{ bs_build_parent }}"
+        state: directory
+        mode: "0755"
+        owner: "{{ bs_user }}"
+        group: "{{ bs_group }}"
+      become_user: "{{ bs_user }}"
     
-  - name: download CEF
-    shell: ./download_cef.sh
-    args:
-      chdir: "{{ bs_build_path }}"
-      creates: "{{ bs_build_path }}/cef.tar.bz2"
-    become_user: "{{ bs_user }}"
+    - debug:
+        msg: "bs_build is {{ bs_build }}"
     
-  - name: setup CEF
-    shell: ./setup_cef.sh
-    args:
-      chdir: "{{ bs_build_path }}"
-      creates: "{{ bs_build_path }}/cef"
-    become_user: "{{ bs_user }}"
-    async: 10800
-    poll: 0
-    register: setup_cef
+    - name: build from source
+      block:
+      - name: check out source
+        git:
+          repo: "{{ repo }}"
+          dest: "{{ bs_build_path }}"
+          version: "{{ bs_latest_release.json.tag_name }}"
+        become_user: "{{ bs_user }}"
+        
+      - name: download CEF
+        shell: ./download_cef.sh
+        args:
+          chdir: "{{ bs_build_path }}"
+          creates: "{{ bs_build_path }}/cef.tar.bz2"
+        become_user: "{{ bs_user }}"
+        
+      - name: setup CEF
+        shell: ./setup_cef.sh
+        args:
+          chdir: "{{ bs_build_path }}"
+          creates: "{{ bs_build_path }}/cef"
+        become_user: "{{ bs_user }}"
+        async: 10800
+        poll: 0
+        register: setup_cef
+        
+      - name: Check on CEF setup
+        async_status:
+          jid: "{{ setup_cef.ansible_job_id }}"
+        become_user: "{{ bs_user }}"
+        register: job_result
+        until: job_result.finished
+        delay: 10
+        retries: 2880
+        
+      - name: build browservice
+        shell: "make -j {{ ansible_processor_vcpus | int }}"
+        args:
+          chdir: "{{ bs_build_path }}"
+          creates: "{{ bs_build_path }}/release/bin/chrome-sandbox"
+        become_user: "{{ bs_user }}"
+        async: 10800
+        poll: 0
+        register: bs_build
+        
+      - name: Check on browservice build
+        async_status:
+          jid: "{{ bs_build.ansible_job_id }}"
+        become_user: "{{ bs_user }}"
+        register: job_result
+        until: job_result.finished
+        delay: 10
+        retries: 2880
+        
+      - name: set permissions
+        file:
+          path: "{{ bs_build_path }}/release/bin/chrome-sandbox"
+          owner: root
+          group: root
+          mode: "4755"
+        
+      - name: setup execution link
+        file:
+          src: "{{ bs_build_path }}/release/{{ item }}"
+          dest: "{{ bs_dir }}/{{ item }}"
+          state: link
+        loop:
+        - "bin"
+        - "obj"
+        become_user: "{{ bs_user }}"
+      
+      - name: install systemd service
+        template:
+          src: browservice.service.j2
+          dest: /etc/systemd/system/browservice.service
+          owner: root
+          group: root
+          mode: "0755"
+          setype: "systemd_unit_file_t"
+      when: bs_build | bool
     
-  - name: Check on CEF setup
-    async_status:
-      jid: "{{ setup_cef.ansible_job_id }}"
-    become_user: "{{ bs_user }}"
-    register: job_result
-    until: job_result.finished
-    delay: 10
-    retries: 2880
+    - name: download appimage
+      block:
+      
+      - name: make bin directory
+        file:
+          path: "{{ bs_appimage_path }}/release/bin"
+          state: directory
+          mode: "0755"
+          owner: "{{ bs_user }}"
+          group: "{{ bs_group }}"
+        become_user: "{{ bs_user }}"
     
-  - name: build browservice
-    shell: "make -j {{ ansible_processor_vcpus | int }}"
-    args:
-      chdir: "{{ bs_build_path }}"
-      creates: "{{ bs_build_path }}/release/bin/chrome-sandbox"
-    become_user: "{{ bs_user }}"
-    async: 10800
-    poll: 0
-    register: bs_build
+      - name: download appimage
+        get_url:
+          url: "{{ bs_release }}/{{ bs_latest_release.json.tag_name }}/browservice-{{ bs_latest_release.json.tag_name }}-x86_64.AppImage"
+          dest: "{{ bs_appimage_path }}/release/bin/browservice"
+          mode: "0755"
+          owner: "{{ bs_user }}"
+          group: "{{ bs_group }}"
+        become_user: "{{ bs_user }}"
+    #  https://github.com/ttalvitie/browservice/releases/download/v0.9.3.0/browservice-v0.9.3.0-x86_64.AppImage
     
-  - name: Check on browservice build
-    async_status:
-      jid: "{{ bs_build.ansible_job_id }}"
-    become_user: "{{ bs_user }}"
-    register: job_result
-    until: job_result.finished
-    delay: 10
-    retries: 2880
-    
-  - name: set permissions
-    file:
-      path: "{{ bs_build_path }}/release/bin/chrome-sandbox"
-      owner: root
-      group: root
-      mode: "4755"
-    
-  - name: setup execution link
-    file:
-      src: "{{ bs_build_path }}/release/{{ item }}"
-      dest: "{{ bs_dir }}/{{ item }}"
-      state: link
-    loop:
-    - "bin"
-    - "obj"
-    become_user: "{{ bs_user }}"
-  
-  - name: install systemd service
-    template:
-      src: browservice.service.j2
-      dest: /etc/systemd/system/browservice.service
-      owner: root
-      group: root
-      mode: "0755"
-      setype: "systemd_unit_file_t"
-  when: bs_build | bool
+      - name: install verdana font
+        shell: "echo 'yes' | {{ bs_appimage_path }}/release/bin/browservice --install-verdana"
+        
+      - name: setup execution link
+        file:
+          src: "{{ bs_appimage_path }}/release/{{ item }}"
+          dest: "{{ bs_dir }}/{{ item }}"
+          state: link
+        loop:
+        - "bin"
+        become_user: "{{ bs_user }}"
+      
+      - name: install systemd service
+        template:
+          src: browservice-appimage.service.j2
+          dest: /etc/systemd/system/browservice.service
+          owner: root
+          group: root
+          mode: "0755"
+          setype: "systemd_unit_file_t"
+      when: not bs_build | bool
+      
+    - name: copy selinux policy
+      copy:
+        src: browservice.te
+        dest: "{{ bs_build_path }}/"
+      become_user: "{{ bs_user }}"
+      register: copy
+      
+    - name: check selinux policy
+      command: "checkmodule -M -m -o {{ bs_build_path }}/browservice.mod {{ bs_build_path }}/browservice.te"
+      become_user: "{{ bs_user }}"
+      when: copy.changed is true
+      
+    - name: compile selinux policy
+      command: "semodule_package -o {{ bs_build_path }}/browservice.pp -m {{ bs_build_path }}/browservice.mod"
+      become_user: "{{ bs_user }}"
+      when: copy.changed is true
+      
+    - name: load selinux policy
+      command: "semodule -i {{ bs_build_path }}/browservice.pp"
+      when: copy.changed is true
+  when:
+    - ansible_facts['distribution'] == "Fedora"
 
-- name: download appimage
+- name: install service on RHEL
   block:
-  
-  - name: make bin directory
-    file:
-      path: "{{ bs_appimage_path }}/release/bin"
-      state: directory
-      mode: "0755"
-      owner: "{{ bs_user }}"
-      group: "{{ bs_group }}"
-    become_user: "{{ bs_user }}"
+    - name: require RHEL 8+
+      fail:
+        msg: RHEL 8 or newer is required
+      when:
+        - ansible_facts['distribution_major_version'] | int < 8
 
-  - name: download appimage
-    get_url:
-      url: "{{ bs_release }}/{{ bs_latest_release.json.tag_name }}/browservice-{{ bs_latest_release.json.tag_name }}-x86_64.AppImage"
-      dest: "{{ bs_appimage_path }}/release/bin/browservice"
-      mode: "0755"
-      owner: "{{ bs_user }}"
-      group: "{{ bs_group }}"
-    become_user: "{{ bs_user }}"
-#  https://github.com/ttalvitie/browservice/releases/download/v0.9.3.0/browservice-v0.9.3.0-x86_64.AppImage
+    - name: enable codeready builder repo
+      community.general.rhsm_repository:
+        name: "codeready-builder-for-rhel-{{ ansible_distribution_major_version }}-{{ ansible_architecture }}-rpms"
 
-  - name: install verdana font
-    shell: "echo 'yes' | {{ bs_appimage_path }}/release/bin/browservice --install-verdana"
+    - name: enable epel repo
+      ansible.builtin.dnf:
+        name: "https://dl.fedoraproject.org/pub/epel/epel-release-latest-{{ ansible_distribution_major_version }}.noarch.rpm"
+
+    - name: install required packages
+      package:
+        name: "{{ pkgs_rhel }}"
+        state: latest
+
+    - name: download F34 xorg-x11-font-utils
+      ansible.builtin.get_url:
+        url: "http://mirror.math.princeton.edu/pub/fedora-archive/fedora/linux/releases/34/Everything/source/tree/Packages/x/xorg-x11-font-utils-7.5-51.fc34.src.rpm"
+        dest: "/tmp/xorg-x11-font-utils-7.5-51.fc34.src.rpm"
+        mode: '0644'
+
+    - name: install xorg-x11-font-utils srpm
+      shell: "rpm -ivh /tmp/xorg-x11-font-utils-7.5-51.fc34.src.rpm"
+
+    - name: rebuild xorg-x11-font-utils rpm
+      shell: "rpmbuild -bb {{ ansible_user_dir }}/rpmbuild/SPECS/xorg-x11-font-utils.spec"
+
+    - name: install xorg-x11-font-utils rpm
+      shell: "rpm -ivh {{ ansible_user_dir }}/rpmbuild/RPMS/x86_64/xorg-x11-font-utils-7.5-51.el9.x86_64.rpm"
+      
+    - name: install MS core fonts
+      shell: "rpm -ivh {{ mstt }}"
+      when: "'msttcore-fonts-installer' not in ansible_facts.packages"
+      
+    - name: create browservice group
+      group:
+        name: "{{ bs_group }}"
+        system: yes
+      
+    - name: create browservice user
+      user:
+        name: "{{ bs_user }}"
+        group: "{{ bs_group }}"
+        comment: "browservice user"
+        home: "{{ bs_dir }}"
+        password_lock: yes
+        shell: "/sbin/nologin"
+        system: yes
+      
+    - name: make build directory
+      file:
+        path: "{{ bs_build_parent }}"
+        state: directory
+        mode: "0755"
+        owner: "{{ bs_user }}"
+        group: "{{ bs_group }}"
+      become_user: "{{ bs_user }}"
     
-  - name: setup execution link
-    file:
-      src: "{{ bs_appimage_path }}/release/{{ item }}"
-      dest: "{{ bs_dir }}/{{ item }}"
-      state: link
-    loop:
-    - "bin"
-    become_user: "{{ bs_user }}"
-  
-  - name: install systemd service
-    template:
-      src: browservice-appimage.service.j2
-      dest: /etc/systemd/system/browservice.service
-      owner: root
-      group: root
-      mode: "0755"
-      setype: "systemd_unit_file_t"
-  when: not bs_build | bool
-  
-- name: copy selinux policy
-  copy:
-    src: browservice.te
-    dest: "{{ bs_build_path }}/"
-  become_user: "{{ bs_user }}"
-  register: copy
-  
-- name: check selinux policy
-  command: "checkmodule -M -m -o {{ bs_build_path }}/browservice.mod {{ bs_build_path }}/browservice.te"
-  become_user: "{{ bs_user }}"
-  when: copy.changed is true
-  
-- name: compile selinux policy
-  command: "semodule_package -o {{ bs_build_path }}/browservice.pp -m {{ bs_build_path }}/browservice.mod"
-  become_user: "{{ bs_user }}"
-  when: copy.changed is true
-  
-- name: load selinux policy
-  command: "semodule -i {{ bs_build_path }}/browservice.pp"
-  when: copy.changed is true
+    - debug:
+        msg: "bs_build is {{ bs_build }}"
+    
+    - name: build from source
+      block:
+      - name: check out source
+        git:
+          repo: "{{ repo }}"
+          dest: "{{ bs_build_path }}"
+          version: "{{ bs_latest_release.json.tag_name }}"
+        become_user: "{{ bs_user }}"
+        
+      - name: download CEF
+        shell: ./download_cef.sh
+        args:
+          chdir: "{{ bs_build_path }}"
+          creates: "{{ bs_build_path }}/cef.tar.bz2"
+        become_user: "{{ bs_user }}"
+        
+      - name: setup CEF
+        shell: ./setup_cef.sh
+        args:
+          chdir: "{{ bs_build_path }}"
+          creates: "{{ bs_build_path }}/cef"
+        become_user: "{{ bs_user }}"
+        async: 10800
+        poll: 0
+        register: setup_cef
+        
+      - name: Check on CEF setup
+        async_status:
+          jid: "{{ setup_cef.ansible_job_id }}"
+        become_user: "{{ bs_user }}"
+        register: job_result
+        until: job_result.finished
+        delay: 10
+        retries: 2880
+        
+      - name: build browservice
+        shell: "make -j {{ ansible_processor_vcpus | int }}"
+        args:
+          chdir: "{{ bs_build_path }}"
+          creates: "{{ bs_build_path }}/release/bin/chrome-sandbox"
+        become_user: "{{ bs_user }}"
+        async: 10800
+        poll: 0
+        register: bs_build
+        
+      - name: Check on browservice build
+        async_status:
+          jid: "{{ bs_build.ansible_job_id }}"
+        become_user: "{{ bs_user }}"
+        register: job_result
+        until: job_result.finished
+        delay: 10
+        retries: 2880
+        
+      - name: set permissions
+        file:
+          path: "{{ bs_build_path }}/release/bin/chrome-sandbox"
+          owner: root
+          group: root
+          mode: "4755"
+        
+      - name: setup execution link
+        file:
+          src: "{{ bs_build_path }}/release/{{ item }}"
+          dest: "{{ bs_dir }}/{{ item }}"
+          state: link
+        loop:
+        - "bin"
+        - "obj"
+        become_user: "{{ bs_user }}"
+      
+      - name: install systemd service
+        template:
+          src: browservice.service.j2
+          dest: /etc/systemd/system/browservice.service
+          owner: root
+          group: root
+          mode: "0755"
+          setype: "systemd_unit_file_t"
+      when: bs_build | bool
+    
+    - name: download appimage
+      block:
+      
+      - name: make bin directory
+        file:
+          path: "{{ bs_appimage_path }}/release/bin"
+          state: directory
+          mode: "0755"
+          owner: "{{ bs_user }}"
+          group: "{{ bs_group }}"
+        become_user: "{{ bs_user }}"
+    
+      - name: download appimage
+        get_url:
+          url: "{{ bs_release }}/{{ bs_latest_release.json.tag_name }}/browservice-{{ bs_latest_release.json.tag_name }}-x86_64.AppImage"
+          dest: "{{ bs_appimage_path }}/release/bin/browservice"
+          mode: "0755"
+          owner: "{{ bs_user }}"
+          group: "{{ bs_group }}"
+        become_user: "{{ bs_user }}"
+    #  https://github.com/ttalvitie/browservice/releases/download/v0.9.3.0/browservice-v0.9.3.0-x86_64.AppImage
+    
+      - name: install verdana font
+        shell: "echo 'yes' | {{ bs_appimage_path }}/release/bin/browservice --install-verdana"
+        
+      - name: setup execution link
+        file:
+          src: "{{ bs_appimage_path }}/release/{{ item }}"
+          dest: "{{ bs_dir }}/{{ item }}"
+          state: link
+        loop:
+        - "bin"
+        become_user: "{{ bs_user }}"
+      
+      - name: install systemd service
+        template:
+          src: browservice-appimage.service.j2
+          dest: /etc/systemd/system/browservice.service
+          owner: root
+          group: root
+          mode: "0755"
+          setype: "systemd_unit_file_t"
+      when: not bs_build | bool
+      
+    - name: copy selinux policy
+      copy:
+        src: browservice.te
+        dest: "{{ bs_build_path }}/"
+      become_user: "{{ bs_user }}"
+      register: copy
+      
+    - name: check selinux policy
+      command: "checkmodule -M -m -o {{ bs_build_path }}/browservice.mod {{ bs_build_path }}/browservice.te"
+      become_user: "{{ bs_user }}"
+      when: copy.changed is true
+      
+    - name: compile selinux policy
+      command: "semodule_package -o {{ bs_build_path }}/browservice.pp -m {{ bs_build_path }}/browservice.mod"
+      become_user: "{{ bs_user }}"
+      when: copy.changed is true
+      
+    - name: load selinux policy
+      command: "semodule -i {{ bs_build_path }}/browservice.pp"
+      when: copy.changed is true
+  when:
+    - ansible_facts['distribution'] == "RedHat"
   
 ...

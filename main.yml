@@ -33,18 +33,10 @@
       delay: 10
       retries: 2880
 
-    - name: explain supported distros
-      debug:
-        msg: "Only Fedora is supported, for local browservice installation"
-      when:
-        - local_service | bool
-        - ansible_facts['distribution'] != "Fedora"
-
     - name: install browservice locally
       import_tasks: local-service.yml
       when:
         - local_service | bool
-        - ansible_facts['distribution'] == "Fedora"
 
     - name: install browservice in a container
       import_tasks: container-service.yml
